@@ -22,7 +22,7 @@
                                                     | {error, any()}.
 do(ProcessFun, Client, Opts) ->
 
-  Defaults = #{ group_config => []
+  Defaults = #{ group_config => [{offset_commit_policy, consumer_managed}]
               , consumer_config => []},
 
   #{ group_id := GroupId
