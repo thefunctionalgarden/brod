@@ -33,18 +33,19 @@ do(ProcessFun, Client, Opts) ->
   InitState = #{client => Client,
                 process_function => ProcessFun},
 
-  brod:start_link_group_subscriber(client,
+  brod:start_link_group_subscriber(Client,
                                    GroupId,
                                    Topics,
                                    GroupConfig,
                                    ConsumerConfig,
+                                   message_set,
                                    ?MODULE,
                                    InitState).
 
 -spec send(context(),
            brod:topic(),
            brod:partition(),
-           kpro:kafka_message_set()) ->   {ok, brod:offset()}
+           brod:batch_input()) ->   {ok, brod:offset()}
                                         | {error, any()}.
 send(Context, Topic, Partition, Batch) ->
   brod:txn_produce(transaction(Context),
@@ -58,7 +59,7 @@ init(GroupId, #{ client := Client
    , transaction_config := Config} =
   maps:merge(#{ tx_id => make_transactional_id()
               , transaction_config => []}, Opts),
-  Tx = brod:transaction(Client, TxId, Config),
+  {ok, Tx} = brod:transaction(Client, TxId, Config),
   {ok, #{ client => Client
         , tx => Tx
         , process_function => ProcessFun
@@ -73,7 +74,9 @@ handle_message(Topic,
                 , tx := Tx
                 , group_id := GroupId} = State) ->
 
+  logger:info("about to call the fun ~p ~p", [context(State), MessageSet]),
   ok = ProcessFun(context(State), MessageSet),
+  logger:info("offsets to commit ~p", [offsets_to_commit(MessageSet)]),
   ok = brod:txn_add_offsets(Tx, GroupId, offsets_to_commit(MessageSet)),
   ok = brod:commit(Tx),
 
