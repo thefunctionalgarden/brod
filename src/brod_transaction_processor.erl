@@ -59,9 +59,9 @@ init(GroupId, #{ client := Client
    , transaction_config := Config} =
   maps:merge(#{ tx_id => make_transactional_id()
               , transaction_config => []}, Opts),
-  {ok, Tx} = brod:transaction(Client, TxId, Config),
   {ok, #{ client => Client
-        , tx => Tx
+        , transaction_config => Config
+        , tx_id => TxId
         , process_function => ProcessFun
         , group_id => GroupId}}.
 
@@ -71,15 +71,19 @@ handle_message(Topic,
                                  , partition = Partition
                                  , messages  = _Messages} = MessageSet,
                #{ process_function := ProcessFun
-                , tx := Tx
+                , client := Client
+                , tx_id := TxId
+                , transaction_config := TransactionConfig
                 , group_id := GroupId} = State) ->
 
-  logger:info("about to call the fun ~p ~p", [context(State), MessageSet]),
-  ok = ProcessFun(context(State), MessageSet),
-  logger:info("offsets to commit ~p", [offsets_to_commit(MessageSet)]),
+  %logger:info("opening the transaction ~p", [TxId]),
+  {ok, Tx} = brod:transaction(Client, TxId, TransactionConfig),
+  %logger:info("about to call the fun ~p ~p", [context(State, Tx), MessageSet]),
+  ok = ProcessFun(context(State, Tx), MessageSet),
+  %logger:info("offsets to commit ~p", [offsets_to_commit(MessageSet)]),
   ok = brod:txn_add_offsets(Tx, GroupId, offsets_to_commit(MessageSet)),
+  %logger:info("commit ~p", [Tx]),
   ok = brod:commit(Tx),
-
   {ok, ack_no_commit, State}.
 
 get_committed_offsets(GroupId, TPs, #{client := Client} = State) ->
@@ -103,7 +107,7 @@ make_transactional_id() ->
   iolist_to_binary([atom_to_list(?MODULE), "-txn-",
                     base64:encode(crypto:strong_rand_bytes(8))]).
 
-context(#{} = State) -> State.
+context(#{} = State, Tx) -> State#{tx => Tx}.
 
 transaction(#{tx := Tx}) -> Tx.
 
