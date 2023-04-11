@@ -1,3 +1,48 @@
+%%%
+%%%   Copyright (c) 2023 @axs-mvd and contributors
+%%%
+%%%   Licensed under the Apache License, Version 2.0 (the "License");
+%%%   you may not use this file except in compliance with the License.
+%%%   You may obtain a copy of the License at
+%%%
+%%%       http://www.apache.org/licenses/LICENSE-2.0
+%%%
+%%%   Unless required by applicable law or agreed to in writing, software
+%%%   distributed under the License is distributed on an "AS IS" BASIS,
+%%%   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%%%   See the License for the specific language governing permissions and
+%%%   limitations under the License.
+%%%
+
+%% @doc `brod_transaction_processor` allows the execution of a function in the context
+%% of a transaction. It abstracts the usage of a group subscriber reading and writing
+%% using a transaction in each fetch cycle.
+%%  For example, the following snippets are equivalent
+%%
+%%-------------------------------------------------
+%%
+%%function_that_does_something(Messages, ...) ->
+%%    write_some_messages_into_some_topic(Messages, ...),
+%%    write_some_other_messages_into_yet_another_topic(Messages, ...).
+%%
+%%handle_message(Topic, Partition, Messages, State) ->
+%%    {ok, Tx} = brod:transaction(...)             % opens a transaction
+%%    function_that_does_something(Messages, ...)  % adds the writes to the transaction
+%%    ok = brod:txn_add_offsets(...)               % add offsets to the transsaction
+%%    ok = btrod:commit(Tx)                        % commit
+%%    {ok, ack_no_commit, State}
+%%
+%%-------------------------------------------------
+%%
+%%brod_transaction_processor:do(
+%%    fun(Context, Messages) ->
+%%        write_some_messages_into_some_topic(Messages, ...),
+%%        write_some_other_messages_into_yet_another_topic(Messages, ...)
+%%     end,
+%%     ...)
+%%
+%%-------------------------------------------------
+%%
 -module(brod_transaction_processor).
 
 -include("include/brod.hrl").
@@ -14,26 +59,38 @@
 -export_type([ context/0
              , process_function/0]).
 
+-type batch_input() :: kpro:batch_input().
+-type client() :: client_id() | pid().
+-type client_id() :: atom().
+-type do_options() :: #{ group_config => proplists:proplist()
+                       , consumer_config => proplists:proplist()
+                       , group_id => binary()
+                       , topics => [binary()]}.
+-type message_set() :: #kafka_message_set{}.
 -type offset() :: kpro:offset().
 -type partition() :: kpro:partition().
 -type topic() :: kpro:topic().
--type batch_input() :: kpro:batch_input().
-
--type client() :: client_id() | pid().
--type client_id() :: atom().
 -type transaction() :: brod_transaction:transaction().
--type message_set() :: #kafka_message_set{}.
 
 -opaque context() :: #{tx => transaction()}.
 
 -type process_function() :: fun((context(), message_set()) -> ok
                                                             | {error, any()}).
 
--spec do(process_function(), client(), #{}) -> {ok, pid()}
-                                             | {error, any()}.
+
+%% @doc executes the ProcessFunction within the context of a transaction.
+%% Options is a map that  must include
+%% group_config as the configuration for the group suscriber.
+%% consumer_config as the configuration for the consumer suscriber.
+%% group_id as the subscriber group id.
+-spec do(process_function(), client(), do_options()) -> {ok, pid()}
+                                                      | {error, any()}.
 do(ProcessFun, Client, Opts) ->
 
   Defaults = #{ group_config => [{offset_commit_policy, consumer_managed}]
+                %% note that if you change the group_config you must include
+                %% the above option, as it enables our fetcher to manage
+                %% the offsets itself
               , consumer_config => []},
 
   #{ group_id := GroupId
@@ -53,7 +110,8 @@ do(ProcessFun, Client, Opts) ->
                                    ?MODULE,
                                    InitState).
 
-
+%% @doc produces a batch of messages in a topic/partition, using the `do`
+%% context
 -spec send(context(), topic(), partition(), batch_input()) -> {ok, offset()}
                                                             | {error, any()}.
 send(Context, Topic, Partition, Batch) ->
@@ -104,7 +162,7 @@ get_committed_offsets(GroupId, TPs, #{client := Client} = State) ->
                            end, [], Offsets)),
   {ok, TPOs, State}.
 
-%@private
+%@@private
 make_transactional_id() ->
   iolist_to_binary([atom_to_list(?MODULE), "-txn-",
                     base64:encode(crypto:strong_rand_bytes(8))]).
