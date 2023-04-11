@@ -14,12 +14,23 @@
 -export_type([ context/0
              , process_function/0]).
 
--opaque context() :: #{}.
--type process_function() :: fun((context(), brod:kafka_message_set()) ->   ok
-                                                                         | {error, any()}).
+-type offset() :: kpro:offset().
+-type partition() :: kpro:partition().
+-type topic() :: kpro:topic().
+-type batch_input() :: kpro:batch_input().
 
--spec do(process_function(), brod:client(), #{}) ->   {ok, pid()}
-                                                    | {error, any()}.
+-type client() :: client_id() | pid().
+-type client_id() :: atom().
+-type transaction() :: brod_transaction:transaction().
+-type message_set() :: #kafka_message_set{}.
+
+-opaque context() :: #{tx => transaction()}.
+
+-type process_function() :: fun((context(), message_set()) -> ok
+                                                            | {error, any()}).
+
+-spec do(process_function(), client(), #{}) -> {ok, pid()}
+                                             | {error, any()}.
 do(ProcessFun, Client, Opts) ->
 
   Defaults = #{ group_config => [{offset_commit_policy, consumer_managed}]
@@ -42,16 +53,11 @@ do(ProcessFun, Client, Opts) ->
                                    ?MODULE,
                                    InitState).
 
--spec send(context(),
-           brod:topic(),
-           brod:partition(),
-           brod:batch_input()) ->   {ok, brod:offset()}
-                                        | {error, any()}.
+
+-spec send(context(), topic(), partition(), batch_input()) -> {ok, offset()}
+                                                            | {error, any()}.
 send(Context, Topic, Partition, Batch) ->
-  brod:txn_produce(transaction(Context),
-                   Topic,
-                   Partition,
-                   Batch).
+  brod:txn_produce(transaction(Context), Topic, Partition, Batch).
 
 init(GroupId, #{ client := Client
                , process_function := ProcessFun} = Opts) ->
@@ -76,13 +82,9 @@ handle_message(Topic,
                 , transaction_config := TransactionConfig
                 , group_id := GroupId} = State) ->
 
-  %logger:info("opening the transaction ~p", [TxId]),
   {ok, Tx} = brod:transaction(Client, TxId, TransactionConfig),
-  %logger:info("about to call the fun ~p ~p", [context(State, Tx), MessageSet]),
   ok = ProcessFun(context(State, Tx), MessageSet),
-  %logger:info("offsets to commit ~p", [offsets_to_commit(MessageSet)]),
   ok = brod:txn_add_offsets(Tx, GroupId, offsets_to_commit(MessageSet)),
-  %logger:info("commit ~p", [Tx]),
   ok = brod:commit(Tx),
   {ok, ack_no_commit, State}.
 
