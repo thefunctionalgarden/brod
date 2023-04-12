@@ -74,10 +74,40 @@
 
 
 %% @doc executes the ProcessFunction within the context of a transaction.
-%% Options is a map that  must include
-%% group_config as the configuration for the group suscriber.
-%% consumer_config as the configuration for the consumer suscriber.
-%% group_id as the subscriber group id.
+%% Options is a map that can include
+%% `group_config' as the configuration for the group suscriber.
+%% `consumer_config' as the configuration for the consumer suscriber.
+%% `transaction_config' transacction config.
+%% `group_id' as the subscriber group id.
+%% `topics' topics to fetch from.
+%%
+%% FizzBuzz sample:
+%%
+%% fizz_buzz(N) when (N rem 15) == 0 -> <<"FizzBuzz">>;
+%% fizz_buzz(N) when (N rem 3) == 0 -> <<"Fizz">>;
+%% fizz_buzz(N) when (N rem 5) == 0 -> <<"Buzz">>;
+%% fizz_buzz(N) -> N end.
+%%
+%% brod_transaction_processor:do(
+%%     fun(Transaction, #kafka_message_set{ topic     = _Topic
+%%                                        , partition = Partition
+%%                                        , messages  = Messages} = _MessageSet) ->
+%%         FizzBuzzed =
+%%         lists:map(fun(#kafka_message{ key = Key
+%%                                     , value = Value}) ->
+%%                       #{ key => Key
+%%                        , value => fizz_buzz(Value)}
+%%                       end, Messages),
+%%
+%%         brod:txn_produce(Transaction,
+%%                           ?OUTPUT_TOPIC,
+%%                           Partition,
+%%                           FizzBuzzed),
+%%
+%%         ok
+%%     end, Client, #{ topics => [?INPUT_TOPIC]
+%%                   , group_id => ?PROCESSOR_GROUP_ID}).
+%%
 -spec do(process_function(), client(), do_options()) -> {ok, pid()}
                                                       | {error, any()}.
 do(ProcessFun, Client, Opts) ->
