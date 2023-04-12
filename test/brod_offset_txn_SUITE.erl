@@ -100,7 +100,7 @@ handle_message(Topic,
                 , group_id := GroupId
                 , observer := ObserverPid} =  State) ->
 
-  {ok, Tx} = brod:transaction(Client),
+  {ok, Tx} = brod:transaction(Client, <<"some_transaction">>, []),
   {ok, _} = brod:txn_produce(Tx, ?TOPIC_OUTPUT_1, Partition, Key, Value),
   {ok, _} = brod:txn_produce(Tx, ?TOPIC_OUTPUT_2, Partition, Key, Value),
   ok = brod:txn_add_offsets(Tx, GroupId, #{{Topic, Partition} => Offset}),

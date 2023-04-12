@@ -35,7 +35,7 @@
 %%-------------------------------------------------
 %%
 %%brod_transaction_processor:do(
-%%    fun(Context, Messages) ->
+%%    fun(Transaction, Messages) ->
 %%        write_some_messages_into_some_topic(Messages, ...),
 %%        write_some_other_messages_into_yet_another_topic(Messages, ...)
 %%     end,
@@ -48,34 +48,29 @@
 -include("include/brod.hrl").
 
 %public API
--export([ do/3
-        , send/4]).
+-export([do/3]).
 
 % group subscriber callbacks
 -export([ init/2
         , handle_message/4
         , get_committed_offsets/3]).
 
--export_type([ context/0
+-export_type([ do_options/0
              , process_function/0]).
 
--type batch_input() :: kpro:batch_input().
 -type client() :: client_id() | pid().
 -type client_id() :: atom().
 -type do_options() :: #{ group_config => proplists:proplist()
                        , consumer_config => proplists:proplist()
+                       , transaction_config => proplists:proplist()
                        , group_id => binary()
                        , topics => [binary()]}.
 -type message_set() :: #kafka_message_set{}.
--type offset() :: kpro:offset().
--type partition() :: kpro:partition().
--type topic() :: kpro:topic().
 -type transaction() :: brod_transaction:transaction().
 
--opaque context() :: #{tx => transaction()}.
 
--type process_function() :: fun((context(), message_set()) -> ok
-                                                            | {error, any()}).
+-type process_function() :: fun((transaction(), message_set()) -> ok
+                                                                | {error, any()}).
 
 
 %% @doc executes the ProcessFunction within the context of a transaction.
@@ -110,13 +105,6 @@ do(ProcessFun, Client, Opts) ->
                                    ?MODULE,
                                    InitState).
 
-%% @doc produces a batch of messages in a topic/partition, using the `do`
-%% context
--spec send(context(), topic(), partition(), batch_input()) -> {ok, offset()}
-                                                            | {error, any()}.
-send(Context, Topic, Partition, Batch) ->
-  brod:txn_produce(transaction(Context), Topic, Partition, Batch).
-
 init(GroupId, #{ client := Client
                , process_function := ProcessFun} = Opts) ->
   #{ tx_id := TxId
@@ -141,7 +129,7 @@ handle_message(Topic,
                 , group_id := GroupId} = State) ->
 
   {ok, Tx} = brod:transaction(Client, TxId, TransactionConfig),
-  ok = ProcessFun(context(State, Tx), MessageSet),
+  ok = ProcessFun(Tx, MessageSet),
   ok = brod:txn_add_offsets(Tx, GroupId, offsets_to_commit(MessageSet)),
   ok = brod:commit(Tx),
   {ok, ack_no_commit, State}.
@@ -167,9 +155,6 @@ make_transactional_id() ->
   iolist_to_binary([atom_to_list(?MODULE), "-txn-",
                     base64:encode(crypto:strong_rand_bytes(8))]).
 
-context(#{} = State, Tx) -> State#{tx => Tx}.
-
-transaction(#{tx := Tx}) -> Tx.
 
 offsets_to_commit(#kafka_message_set{ topic     = Topic
                                     , partition = Partition

@@ -150,26 +150,23 @@ t_broken_test(Config) ->
   ok.
 
 start_broken_processor(Client) ->
-  brod_transaction_processor:do(
-    fun(Context, #kafka_message_set{ topic     = Topic
-                                   , partition = Partition
-                                   , messages  = Messages} = _MessageSet) ->
-        logger:info("Topic ~p partition ~p messages ~p",
-                    [Topic, Partition, Messages]),
-
+  brod:txn_do(
+    fun(Transaction, #kafka_message_set{ topic     = _Topic
+                                       , partition = Partition
+                                       , messages  = Messages} = _MessageSet) ->
         lists:foreach(fun(#kafka_message{ key = Key
                                         , value = Value}) ->
-                          brod_transaction_processor:send(Context,
-                                                          ?OUTPUT_TOPIC_1,
-                                                          Partition,
-                                                          [#{ key => Key
-                                                            , value => Value}]),
+                          brod:txn_produce(Transaction,
+                                           ?OUTPUT_TOPIC_1,
+                                           Partition,
+                                           [#{ key => Key
+                                             , value => Value}]),
 
-                          brod_transaction_processor:send(Context,
-                                                          ?OUTPUT_TOPIC_2,
-                                                          Partition,
-                                                          [#{ key => Key
-                                                            , value => Value}]),
+                          brod:txn_produce(Transaction,
+                                           ?OUTPUT_TOPIC_2,
+                                           Partition,
+                                           [#{ key => Key
+                                             , value => Value}]),
                           %% this should break a few things .)
                           false = is_process_alive(self())
                       end, Messages),
@@ -178,23 +175,24 @@ start_broken_processor(Client) ->
                   , group_id => ?PROCESSOR_GROUP_ID}).
 
 start_processor(Client) ->
-  brod_transaction_processor:do(
-    fun(Context, #kafka_message_set{ topic     = _Topic
-                                   , partition = Partition
-                                   , messages  = Messages} = _MessageSet) ->
+  brod:txn_do(
+    fun(Transaction, #kafka_message_set{ topic     = _Topic
+                                       , partition = Partition
+                                       , messages  = Messages} = _MessageSet) ->
 
         lists:foreach(fun(#kafka_message{ key = Key
                                         , value = Value}) ->
-                          brod_transaction_processor:send(Context,
-                                                          ?OUTPUT_TOPIC_1,
-                                                          Partition,
-                                                          [#{ key => Key
-                                                            , value => Value}]),
-                          brod_transaction_processor:send(Context,
-                                                          ?OUTPUT_TOPIC_2,
-                                                          Partition,
-                                                          [#{ key => Key
-                                                            , value => Value}])
+                          brod:txn_produce(Transaction,
+                                           ?OUTPUT_TOPIC_1,
+                                           Partition,
+                                           [#{ key => Key
+                                             , value => Value}]),
+
+                          brod:txn_produce(Transaction,
+                                           ?OUTPUT_TOPIC_2,
+                                           Partition,
+                                           [#{ key => Key
+                                             , value => Value}])
                       end, Messages),
         ok
     end, Client, #{ topics => [?INPUT_TOPIC]
@@ -206,7 +204,7 @@ start_fetchers(ObserverPid, Client) ->
                                    ?GROUP_ID,
                                    [?OUTPUT_TOPIC_1, ?OUTPUT_TOPIC_2],
                                    [],
-                                   [],
+                                   [{isolation_level, read_committed}],
                                    message_set,
                                    ?MODULE,
                                    #{ client => Client
